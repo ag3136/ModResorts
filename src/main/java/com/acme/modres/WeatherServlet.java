@@ -13,7 +13,6 @@ import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.ProtocolException;
 import java.net.URL;
-import java.util.Hashtable;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -35,9 +34,11 @@ import javax.management.NotCompliantMBeanException;
 import javax.management.ObjectInstance;
 import javax.management.ObjectName;
 import javax.management.ReflectionException;
-import javax.naming.InitialContext;
-import javax.naming.NamingException;
 import javax.servlet.annotation.WebServlet;
+
+import com.google.cloud.secretmanager.v1.AccessSecretVersionResponse;
+import com.google.cloud.secretmanager.v1.SecretManagerServiceClient;
+import com.google.cloud.secretmanager.v1.SecretVersionName;
 
 @WebServlet({ "/resorts/weather" })
 public class WeatherServlet extends HttpServlet {
@@ -46,14 +47,15 @@ public class WeatherServlet extends HttpServlet {
   @Inject
   private ModResortsCustomerInformation customerInfo;
 
-  // local OS environment variable key name. The key value should provide an API
-  // key that will be used to
-  // get weather information from site: http://www.wunderground.com
-  private static final String WEATHER_API_KEY = "WEATHER_API_KEY";
+  // Environment variable holding the GCP project ID for Secret Manager lookups
+  private static final String GCP_PROJECT_ID_ENV = "GCP_PROJECT_ID";
+
+  // Secret Manager secret name for the Weather API key (blocker-7)
+  // Falls back to environment variable WEATHER_API_KEY for local/non-GCP environments
+  private static final String WEATHER_API_KEY_SECRET_NAME = "WEATHER_API_KEY";
+  private static final String WEATHER_API_KEY_ENV = "WEATHER_API_KEY";
 
   private static final Logger logger = Logger.getLogger(WeatherServlet.class.getName());
-
-  private static InitialContext context;
 
   MBeanServer server;
   ObjectName weatherON;
@@ -65,7 +67,6 @@ public class WeatherServlet extends HttpServlet {
     try {
       weatherON = new ObjectName("com.acme.modres.mbean:name=appInfo");
     } catch (MalformedObjectNameException e) {
-      // TODO Auto-generated catch block
       e.printStackTrace();
     }
     try {
@@ -75,7 +76,6 @@ public class WeatherServlet extends HttpServlet {
     } catch (InstanceAlreadyExistsException | MBeanRegistrationException | NotCompliantMBeanException e) {
       e.printStackTrace();
     }
-    context = setInitialContextProps();
   }
 
   @Override
@@ -84,10 +84,35 @@ public class WeatherServlet extends HttpServlet {
       try {
         server.unregisterMBean(weatherON);
       } catch (MBeanRegistrationException | InstanceNotFoundException e) {
-        // TODO Auto-generated catch block
         e.printStackTrace();
       }
     }
+  }
+
+  /**
+   * Retrieves the Weather API key from Google Secret Manager (blocker-7).
+   * Falls back to the WEATHER_API_KEY environment variable when Secret Manager
+   * is unavailable (e.g., local development) or GCP_PROJECT_ID is not set.
+   *
+   * @return the API key string, or null if not found
+   */
+  private String getWeatherApiKey() {
+    String projectId = System.getenv(GCP_PROJECT_ID_ENV);
+    if (projectId != null && !projectId.trim().isEmpty()) {
+      try (SecretManagerServiceClient client = SecretManagerServiceClient.create()) {
+        SecretVersionName secretVersionName = SecretVersionName.of(
+            projectId, WEATHER_API_KEY_SECRET_NAME, "latest");
+        AccessSecretVersionResponse response = client.accessSecretVersion(secretVersionName);
+        String secretValue = response.getPayload().getData().toStringUtf8();
+        logger.log(Level.FINE, "Weather API key retrieved from Google Secret Manager");
+        return secretValue;
+      } catch (Exception e) {
+        logger.log(Level.WARNING,
+            "Failed to retrieve Weather API key from Secret Manager, falling back to env var: " + e.getMessage());
+      }
+    }
+    // Fallback: read from environment variable for local/non-GCP environments
+    return System.getenv(WEATHER_API_KEY_ENV);
   }
 
   @Override
@@ -106,7 +131,8 @@ public class WeatherServlet extends HttpServlet {
     String city = request.getParameter("selectedCity");
     logger.log(Level.FINE, "requested city is " + city);
 
-    String weatherAPIKey = System.getenv(WEATHER_API_KEY);
+    // Retrieve API key from Google Secret Manager (blocker-7)
+    String weatherAPIKey = getWeatherApiKey();
     String mockedKey = mockKey(weatherAPIKey);
     logger.log(Level.FINE, "weatherAPIKey is " + mockedKey);
 
@@ -247,32 +273,5 @@ public class WeatherServlet extends HttpServlet {
     }
     String lastToKeep = toBeMocked.substring(toBeMocked.length() - 3);
     return "*********" + lastToKeep;
-  }
-
-  private String configureEnvDiscovery() {
-
-    String serverEnv = "";
-
-    serverEnv += com.ibm.websphere.runtime.ServerName.getDisplayName();
-    serverEnv += com.ibm.websphere.runtime.ServerName.getFullName();
-
-    return serverEnv;
-  }
-
-  private InitialContext setInitialContextProps() {
-
-    Hashtable ht = new Hashtable();
-
-    ht.put("java.naming.factory.initial", "com.ibm.websphere.naming.WsnInitialContextFactory");
-    ht.put("java.naming.provider.url", "corbaloc:iiop:localhost:2809");
-
-    InitialContext ctx = null;
-    try {
-      ctx = new InitialContext(ht);
-    } catch (NamingException e) {
-      e.printStackTrace();
-    }
-
-    return ctx;
   }
 }

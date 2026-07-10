@@ -1,8 +1,6 @@
 package com.acme.modres.db;
 
-import javax.annotation.Resource;
-import javax.ejb.Singleton;
-import javax.ejb.Startup;
+import org.springframework.stereotype.Service;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -10,8 +8,15 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 
-@Singleton
-@Startup
+/**
+ * Customer information service migrated from EJB 2.x to Spring Boot (blocker-8, blocker-9).
+ *
+ * Replaced EJB annotations (@Singleton, @Startup from javax.ejb) with Spring Boot
+ * @Service stereotype annotation. This removes the heavy EJB container dependency
+ * and aligns with cloud-native microservices patterns on GKE/Cloud Run.
+ * Persistence is managed via Cloud SQL through the injected DataSource.
+ */
+@Service
 public class ModResortsCustomerInformation {
   private static final String SELECT_CUSTOMERS_QUERY = "SELECT INFO FROM CUSTOMER";
 

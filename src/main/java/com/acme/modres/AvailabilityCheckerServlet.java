@@ -1,18 +1,18 @@
 package com.acme.modres;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintWriter;
-import java.util.logging.Logger;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
+import java.nio.channels.Channels;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
+import java.util.TimeZone;
+import java.util.logging.Logger;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+
 import javax.naming.InitialContext;
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
@@ -25,7 +25,10 @@ import com.acme.modres.mbean.reservation.DateChecker;
 import com.acme.modres.mbean.reservation.ReservationCheckerData;
 import com.acme.modres.mbean.reservation.Reservation;
 
-import com.acme.modres.util.ZipValidator;
+import com.google.cloud.storage.BlobId;
+import com.google.cloud.storage.BlobInfo;
+import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageOptions;
 
 @WebServlet({ "/resorts/availability" })
 public class AvailabilityCheckerServlet extends HttpServlet {
@@ -36,6 +39,11 @@ public class AvailabilityCheckerServlet extends HttpServlet {
   private static InitialContext context;
 
   private ReservationCheckerData reservationCheckerData;
+
+  // GCS bucket name read from environment variable for cloud-native configuration
+  private static final String GCS_BUCKET_NAME = System.getenv("GCS_BUCKET_NAME") != null
+      ? System.getenv("GCS_BUCKET_NAME")
+      : "modresorts-data";
 
   @Override
   public void init() {
@@ -61,8 +69,11 @@ public class AvailabilityCheckerServlet extends HttpServlet {
 
       for (Reservation reservation : reservations) {
         try {
-          Date fromDate = new SimpleDateFormat(Constants.DATA_FORMAT).parse(reservation.getFromDate());
-          Date toDate = new SimpleDateFormat(Constants.DATA_FORMAT).parse(reservation.getToDate());
+          // Standardize on UTC to avoid server-local timezone dependencies (blocker-10, blocker-11)
+          SimpleDateFormat sdf = new SimpleDateFormat(Constants.DATA_FORMAT);
+          sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+          Date fromDate = sdf.parse(reservation.getFromDate());
+          Date toDate = sdf.parse(reservation.getToDate());
           Date selectedDate = reservationCheckerData.getSelectedDate();
 
           if (selectedDate.after(fromDate) && selectedDate.before(toDate)) {
@@ -99,43 +110,52 @@ public class AvailabilityCheckerServlet extends HttpServlet {
     doGet(request, response);
   }
 
+  /**
+   * Exports reservations as a ZIP file to Google Cloud Storage instead of local filesystem.
+   * Replaces hard-coded file paths (blocker-1), local file write operations (blocker-2),
+   * java.io.File usage (blocker-4), and resource leaks (blocker-5) with GCS-backed operations
+   * using try-with-resources for automatic resource management.
+   */
   protected int exportRevervations(String selectedDateStr) {
-    File fileToZip = IOUtils.getFileFromRelativePath("reservations.json");
-    String userDirectory = System.getProperty("user.home");
-    String zipPath = userDirectory + "/reservations.zip";
+    String objectName = "exports/reservations.zip";
 
-    FileOutputStream fos;
     try {
-      fos = new FileOutputStream(zipPath);
-      ZipOutputStream zipOut = new ZipOutputStream(fos);
-
-      FileInputStream fis = new FileInputStream(fileToZip);
-      ZipEntry zipEntry = new ZipEntry(fileToZip.getName());
-      zipOut.putNextEntry(zipEntry);
-
-      byte[] bytes = new byte[1024];
-      int length;
-      while ((length = fis.read(bytes)) >= 0) {
-        zipOut.write(bytes, 0, length);
+      // Read reservations content from classpath resource
+      byte[] reservationsContent;
+      try (InputStream resourceStream = IOUtils.class.getClassLoader()
+          .getResourceAsStream("reservations.json")) {
+        if (resourceStream == null) {
+          logger.warning("reservations.json not found in classpath");
+          return -1;
+        }
+        reservationsContent = resourceStream.readAllBytes();
       }
-      fis.close();
 
-      zipOut.close();
-      fos.close();
+      // Build ZIP content in memory and upload directly to GCS (blocker-1, blocker-2, blocker-4)
+      Storage storage = StorageOptions.getDefaultInstance().getService();
+      BlobId blobId = BlobId.of(GCS_BUCKET_NAME, objectName);
+      BlobInfo blobInfo = BlobInfo.newBuilder(blobId)
+          .setContentType("application/zip")
+          .build();
 
-      // verify zip
-      ZipValidator zipValidator = new ZipValidator(new File(zipPath));
-      if (zipValidator.isValid()) {
+      // Use try-with-resources for automatic resource management (blocker-5)
+      try (java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+           ZipOutputStream zipOut = new ZipOutputStream(baos)) {
+        ZipEntry zipEntry = new ZipEntry("reservations.json");
+        zipOut.putNextEntry(zipEntry);
+        zipOut.write(reservationsContent);
+        zipOut.closeEntry();
+        zipOut.finish();
+
+        byte[] zipBytes = baos.toByteArray();
+        // Upload ZIP bytes directly to GCS — no local file system dependency
+        storage.create(blobInfo, zipBytes);
+        logger.info("Reservations ZIP uploaded to GCS: gs://" + GCS_BUCKET_NAME + "/" + objectName);
         return 0;
       }
-    } catch (FileNotFoundException e) {
-      // TODO Auto-generated catch block
-      e.printStackTrace();
     } catch (IOException e) {
-      // TODO Auto-generated catch block
       e.printStackTrace();
     } catch (Throwable e) {
-      // TODO Auto-generated catch block
       e.printStackTrace();
     }
     return -1;

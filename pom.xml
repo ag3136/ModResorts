@@ -5,7 +5,9 @@
   <groupId>com.acme.modres</groupId>
   <artifactId>modresorts</artifactId>
   <version>2.0.0</version>
-  <packaging>war</packaging>
+  <!-- Blocker-15, Blocker-16: Changed packaging from 'war' to 'jar' for self-contained
+       executable JAR with embedded Tomcat, enabling containerized deployment on GKE/Cloud Run -->
+  <packaging>jar</packaging>
   <name>ModResorts</name>
   <properties>
     <maven.compiler.target>1.8</maven.compiler.target>
@@ -13,20 +15,62 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.version>2.0.0</project.version>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <spring.boot.version>2.7.18</spring.boot.version>
+    <gcp.libraries.bom.version>26.34.0</gcp.libraries.bom.version>
   </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- GCP Libraries BOM for consistent GCP SDK versions -->
+      <dependency>
+        <groupId>com.google.cloud</groupId>
+        <artifactId>libraries-bom</artifactId>
+        <version>${gcp.libraries.bom.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
+    <!-- Spring Boot Starter Web with embedded Tomcat (replaces external app server WAR deployment)
+         Blocker-15, Blocker-16: Provides self-contained executable JAR with embedded servlet container -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+      <version>${spring.boot.version}</version>
+    </dependency>
+
+    <!-- Spring Boot Starter for dependency injection (replaces EJB @Singleton/@Startup)
+         Blocker-8, Blocker-9: Spring @Service replaces EJB 2.x container-managed beans -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter</artifactId>
+      <version>${spring.boot.version}</version>
+    </dependency>
+
+    <!-- Java EE API for servlet/inject annotations still used in the codebase -->
     <dependency>
       <groupId>javax</groupId>
       <artifactId>javaee-api</artifactId>
       <version>7.0</version>
       <scope>provided</scope>
     </dependency>
+
+    <!-- Google Cloud Storage SDK — replaces local file system operations
+         Blocker-1, Blocker-2, Blocker-3, Blocker-4, Blocker-6: GCS for durable cloud storage -->
     <dependency>
-      <groupId>com.ibm.websphere.appserver</groupId>
-      <artifactId>was_public</artifactId>
-      <version>9.0.0</version>
-      <scope>provided</scope>
+      <groupId>com.google.cloud</groupId>
+      <artifactId>google-cloud-storage</artifactId>
     </dependency>
+
+    <!-- Google Secret Manager SDK — replaces hard-coded API keys/secrets
+         Blocker-7: Centralized secret lifecycle management with access control and audit logging -->
+    <dependency>
+      <groupId>com.google.cloud</groupId>
+      <artifactId>google-cloud-secretmanager</artifactId>
+    </dependency>
+
     <dependency>
       <groupId>com.google.code.gson</groupId>
       <artifactId>gson</artifactId>
@@ -57,22 +101,22 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
   <build>
     <plugins>
+      <!-- Spring Boot Maven Plugin: produces self-contained executable JAR with embedded Tomcat
+           Blocker-15, Blocker-16: Replaces maven-war-plugin for cloud-native JAR packaging -->
       <plugin>
-        <artifactId>maven-war-plugin</artifactId>
-        <version>3.1.0</version>
-        <configuration>
-          <failOnMissingWebXml>false</failOnMissingWebXml>
-          <packagingExcludes>pom.xml, src/, target/, WebContent/</packagingExcludes>
-          <warSourceDirectory>WebContent</warSourceDirectory>
-          <webResources>
-            <resource>
-              <directory>src/main/resources</directory>
-              <targetPath>WEB-INF/classes</targetPath>
-            </resource>
-          </webResources>
-        </configuration>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <version>${spring.boot.version}</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
       <plugin>
         <artifactId>maven-resources-plugin</artifactId>
