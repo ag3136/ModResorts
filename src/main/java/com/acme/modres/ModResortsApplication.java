@@ -1,0 +1,18 @@
+package com.acme.modres;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.web.servlet.ServletComponentScan;
+
+/**
+ * Spring Boot application entry point for ModResorts.
+ * Enables executable JAR packaging with embedded Tomcat for cloud deployment.
+ */
+@SpringBootApplication
+@ServletComponentScan
+public class ModResortsApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(ModResortsApplication.class, args);
+    }
+}
