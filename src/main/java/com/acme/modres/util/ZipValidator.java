@@ -7,25 +7,34 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
 import java.util.zip.ZipFile;
 
-public class ZipValidator extends ZipFile {
-
-  public ZipValidator(File file) throws ZipException, IOException {
-    super(file);
-    this.file = file;
-  }
+/**
+ * ZipValidator uses composition instead of inheritance to validate ZIP files.
+ * This follows best practices and implements AutoCloseable for proper resource management.
+ */
+public class ZipValidator implements AutoCloseable {
 
   private File file;
+  private ZipFile zipFile;
+
+  public ZipValidator(File file) throws ZipException, IOException {
+    this.file = file;
+    this.zipFile = new ZipFile(file);
+  }
 
   public boolean isValid() throws Throwable {
-    if (file.exists()) {
-      ZipValidator zipFile = new ZipValidator(file);
+    if (file.exists() && zipFile != null) {
       Enumeration<? extends ZipEntry> entries = zipFile.entries();
       if (!entries.hasMoreElements()) {
         return true;
       }
-      zipFile.close();
     }
     return false;
   }
 
+  @Override
+  public void close() throws IOException {
+    if (zipFile != null) {
+      zipFile.close();
+    }
+  }
 }

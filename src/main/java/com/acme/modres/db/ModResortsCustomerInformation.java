@@ -1,14 +1,15 @@
 package com.acme.modres.db;
 
-import javax.annotation.Resource;
-import javax.ejb.Singleton;
-import javax.ejb.Startup;
+import jakarta.annotation.Resource;
+import jakarta.ejb.Singleton;
+import jakarta.ejb.Startup;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.List;
 
 @Singleton
 @Startup
@@ -19,11 +20,11 @@ public class ModResortsCustomerInformation {
   // @Resource(lookup = "jdbc/ModResortsJndi")
   private DataSource dataSource;
 
-  public ArrayList<String> getCustomerInformation() {
+  public List<String> getCustomerInformation() {
     Connection conn = null;
     PreparedStatement stmt = null;
     ResultSet rs = null;
-    ArrayList<String> customerInfo = new ArrayList<>();
+    List<String> customerInfo = new ArrayList<>();
 
     try {
       // Get a connection from the injected data source
