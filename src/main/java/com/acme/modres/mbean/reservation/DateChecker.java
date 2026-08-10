@@ -2,10 +2,13 @@ package com.acme.modres.mbean.reservation;
 
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.Date;
 import java.util.List;
 
 import com.acme.modres.Constants;
+import com.acme.modres.mbean.IOUtils;
 
 public class DateChecker implements Runnable {
   ReservationCheckerData data;
@@ -17,6 +20,7 @@ public class DateChecker implements Runnable {
   }
 
   public void run() {
+    IOUtils.scheduleAvailabilityCheck(LocalDate.now(ZoneOffset.UTC).toString());
     for (int i = 0; i < reservations.size(); i++) {
       Reservation reservation = reservations.get(i);
       Date selectedDate = data.getSelectedDate();

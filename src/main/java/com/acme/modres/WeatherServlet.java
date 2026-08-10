@@ -3,6 +3,9 @@ package com.acme.modres;
 import com.acme.modres.db.ModResortsCustomerInformation;
 import com.acme.modres.exception.ExceptionHandler;
 import com.acme.modres.mbean.AppInfo;
+import com.azure.identity.DefaultAzureCredentialBuilder;
+import com.azure.security.keyvault.secrets.SecretClient;
+import com.azure.security.keyvault.secrets.SecretClientBuilder;
 
 import java.io.BufferedReader;
 
@@ -50,6 +53,8 @@ public class WeatherServlet extends HttpServlet {
   // key that will be used to
   // get weather information from site: http://www.wunderground.com
   private static final String WEATHER_API_KEY = "WEATHER_API_KEY";
+  private static final String WEATHER_API_KEY_SECRET_NAME = "WEATHER_API_KEY_SECRET_NAME";
+  private static final String AZURE_KEY_VAULT_ENDPOINT = "AZURE_KEY_VAULT_ENDPOINT";
 
   private static final Logger logger = Logger.getLogger(WeatherServlet.class.getName());
 
@@ -106,7 +111,7 @@ public class WeatherServlet extends HttpServlet {
     String city = request.getParameter("selectedCity");
     logger.log(Level.FINE, "requested city is " + city);
 
-    String weatherAPIKey = System.getenv(WEATHER_API_KEY);
+    String weatherAPIKey = getWeatherApiKeyFromKeyVault();
     String mockedKey = mockKey(weatherAPIKey);
     logger.log(Level.FINE, "weatherAPIKey is " + mockedKey);
 
@@ -247,6 +252,28 @@ public class WeatherServlet extends HttpServlet {
     }
     String lastToKeep = toBeMocked.substring(toBeMocked.length() - 3);
     return "*********" + lastToKeep;
+  }
+
+  private String getWeatherApiKeyFromKeyVault() {
+    String keyVaultEndpoint = System.getenv(AZURE_KEY_VAULT_ENDPOINT);
+    String secretName = System.getenv(WEATHER_API_KEY_SECRET_NAME);
+    if (secretName == null || secretName.trim().isEmpty()) {
+      secretName = WEATHER_API_KEY;
+    }
+
+    if (keyVaultEndpoint != null && !keyVaultEndpoint.trim().isEmpty()) {
+      try {
+        SecretClient secretClient = new SecretClientBuilder()
+            .vaultUrl(keyVaultEndpoint)
+            .credential(new DefaultAzureCredentialBuilder().build())
+            .buildClient();
+        return secretClient.getSecret(secretName).getValue();
+      } catch (RuntimeException e) {
+        logger.log(Level.WARNING, "Unable to retrieve weather API key from Azure Key Vault using Managed Identity.", e);
+      }
+    }
+
+    return System.getenv(WEATHER_API_KEY);
   }
 
   private String configureEnvDiscovery() {
