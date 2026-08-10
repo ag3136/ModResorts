@@ -1,13 +1,16 @@
 package com.acme.modres.mbean.reservation;
 
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 import com.acme.modres.Constants;
+import com.acme.modres.cloud.AzureServiceBusScheduler;
 
 public class DateChecker implements Runnable {
+  private static final DateTimeFormatter RESERVATION_DATE_FORMATTER = DateTimeFormatter.ofPattern(Constants.DATA_FORMAT);
+
   ReservationCheckerData data;
   List<Reservation> reservations;
 
@@ -17,21 +20,26 @@ public class DateChecker implements Runnable {
   }
 
   public void run() {
+    AzureServiceBusScheduler.scheduleIfConfigured(
+        "{\"operation\":\"date-check\",\"selectedDate\":\"" + data.getSelectedDate() + "\"}",
+        data.getSelectedDate().atStartOfDay().atOffset(ZoneOffset.UTC));
+
+    boolean available = true;
     for (int i = 0; i < reservations.size(); i++) {
       Reservation reservation = reservations.get(i);
-      Date selectedDate = data.getSelectedDate();
+      LocalDate selectedDate = data.getSelectedDate();
 
       try {
-        Date fromDate = new SimpleDateFormat(Constants.DATA_FORMAT).parse(reservation.getFromDate());
-        Date toDate = new SimpleDateFormat(Constants.DATA_FORMAT).parse(reservation.getToDate());
-        if (selectedDate.after(fromDate) && selectedDate.before(toDate)) {
-          data.setAvailablility(false);
+        LocalDate fromDate = LocalDate.parse(reservation.getFromDate(), RESERVATION_DATE_FORMATTER);
+        LocalDate toDate = LocalDate.parse(reservation.getToDate(), RESERVATION_DATE_FORMATTER);
+        if (selectedDate.isAfter(fromDate) && selectedDate.isBefore(toDate)) {
+          available = false;
           break;
         }
-      } catch (ParseException ex) {
+      } catch (RuntimeException ex) {
         ex.printStackTrace();
       }
     }
-    data.setAvailablility(true);
+    data.setAvailablility(available);
   }
 }

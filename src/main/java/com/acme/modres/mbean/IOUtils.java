@@ -1,70 +1,70 @@
 package com.acme.modres.mbean;
 
-import java.io.File;
-import java.io.FileOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 
+import com.acme.modres.cloud.AzureBlobStorageService;
 import com.acme.modres.mbean.reservation.ReservationList;
-import com.acme.modres.util.JsonInputStream;
+import com.google.gson.Gson;
 
 public final class IOUtils {
 
-  public static File getFileFromRelativePath(String path) {
-    File file = null;
-    InputStream initialStream = null;
-    OutputStream outStream = null;
-    try {
-      initialStream = IOUtils.class.getClassLoader().getResourceAsStream(path);
-      byte[] buffer = new byte[initialStream.available()];
-      initialStream.read(buffer);
+  private static final String AZURE_STORAGE_ENABLED = "AZURE_STORAGE_ENABLED";
+  private static final Gson GSON = new Gson();
 
-      file = File.createTempFile(path, null);
-      outStream = new FileOutputStream(file);
-      outStream.write(buffer);
-      outStream.close();
-    } catch (Exception e) {
-      e.printStackTrace();
-    } finally {
-      if (initialStream != null) {
-        try {
-          initialStream.close();
-        } catch (IOException e) {
-        }
-      } else if (outStream != null) {
-        try {
-          outStream.close();
-        } catch (IOException e) {
-        }
-      }
+  private IOUtils() {
+  }
+
+  public static InputStream getInputStreamFromStorage(String path) throws IOException {
+    if (isAzureStorageEnabled()) {
+      return AzureBlobStorageService.getInstance().openInputStream(path);
     }
 
-    return file;
+    InputStream inputStream = IOUtils.class.getClassLoader().getResourceAsStream(path);
+    if (inputStream == null) {
+      throw new IOException("Resource not found: " + path);
+    }
+    return inputStream;
+  }
+
+  public static byte[] getBytesFromStorage(String path) throws IOException {
+    try (InputStream initialStream = getInputStreamFromStorage(path);
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+      byte[] buffer = new byte[8192];
+      int bytesRead;
+      while ((bytesRead = initialStream.read(buffer)) != -1) {
+        outputStream.write(buffer, 0, bytesRead);
+      }
+      return outputStream.toByteArray();
+    }
+  }
+
+  public static String writeBytesToStorage(String path, byte[] bytes, String contentType) {
+    AzureBlobStorageService.getInstance().uploadBytes(path, bytes, contentType);
+    return path;
   }
 
   public static OpMetadataList getOpListFromConfig() {
-    File file = getFileFromRelativePath("ops.json"); // fix hardcoded paths
-    try (JsonInputStream is = new JsonInputStream(file)) {
-      OpMetadataList opList = new OpMetadataList(); // empty default
-      opList = (OpMetadataList) is.parseJsonAs(OpMetadataList.class);
-      return opList;
-    } catch (IOException e) {
-      e.printStackTrace();
-      return null;
-    }
+    return parseJsonFromStorage("ops.json", OpMetadataList.class);
   }
 
   public static ReservationList getReservationListFromConfig() {
-    File file = getFileFromRelativePath("reservations.json"); // fix hardcoded paths
-    try (JsonInputStream is = new JsonInputStream(file)) {
-      ReservationList reservationList = new ReservationList(); // empty default
-      reservationList = (ReservationList) is.parseJsonAs(ReservationList.class);
-      return reservationList;
+    return parseJsonFromStorage("reservations.json", ReservationList.class);
+  }
+
+  private static <T> T parseJsonFromStorage(String path, Class<T> cls) {
+    try (InputStream inputStream = getInputStreamFromStorage(path)) {
+      return GSON.fromJson(new java.io.InputStreamReader(inputStream, StandardCharsets.UTF_8), cls);
     } catch (IOException e) {
       e.printStackTrace();
       return null;
     }
   }
 
+  private static boolean isAzureStorageEnabled() {
+    String value = System.getenv(AZURE_STORAGE_ENABLED);
+    return value == null || Boolean.parseBoolean(value);
+  }
 }

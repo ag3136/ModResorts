@@ -1,18 +1,17 @@
 package com.acme.modres;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.logging.Logger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.List;
+
 import javax.naming.InitialContext;
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
@@ -20,16 +19,18 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import com.acme.modres.cloud.AzureServiceBusScheduler;
 import com.acme.modres.mbean.IOUtils;
-import com.acme.modres.mbean.reservation.DateChecker;
-import com.acme.modres.mbean.reservation.ReservationCheckerData;
 import com.acme.modres.mbean.reservation.Reservation;
-
+import com.acme.modres.mbean.reservation.ReservationCheckerData;
 import com.acme.modres.util.ZipValidator;
 
 @WebServlet({ "/resorts/availability" })
 public class AvailabilityCheckerServlet extends HttpServlet {
   private static final long serialVersionUID = 1L;
+  private static final DateTimeFormatter RESERVATION_DATE_FORMATTER = DateTimeFormatter.ofPattern(Constants.DATA_FORMAT);
+  private static final String RESERVATIONS_BLOB = "reservations.json";
+  private static final String RESERVATIONS_EXPORT_BLOB = "exports/reservations.zip";
 
   private static final Logger logger = Logger.getLogger(AvailabilityCheckerServlet.class.getName());
 
@@ -39,7 +40,7 @@ public class AvailabilityCheckerServlet extends HttpServlet {
 
   @Override
   public void init() {
-    // load reserved dates
+    // load reserved dates from Azure Blob Storage-backed configuration
     this.reservationCheckerData = new ReservationCheckerData(IOUtils.getReservationListFromConfig());
   }
 
@@ -52,6 +53,11 @@ public class AvailabilityCheckerServlet extends HttpServlet {
 
     String selectedDateStr = request.getParameter("date");
     boolean parsedDate = reservationCheckerData.setSelectedDate(selectedDateStr);
+    if (parsedDate) {
+      AzureServiceBusScheduler.scheduleIfConfigured(
+          "{\"operation\":\"availability-check\",\"date\":\"" + selectedDateStr + "\"}",
+          reservationCheckerData.getSelectedDate().atStartOfDay().atOffset(ZoneOffset.UTC));
+    }
     if (!parsedDate || reservationCheckerData.getReservationList() == null) {
       statusCode = 500;
       reservationCheckerData.setAvailablility(false);
@@ -61,16 +67,16 @@ public class AvailabilityCheckerServlet extends HttpServlet {
 
       for (Reservation reservation : reservations) {
         try {
-          Date fromDate = new SimpleDateFormat(Constants.DATA_FORMAT).parse(reservation.getFromDate());
-          Date toDate = new SimpleDateFormat(Constants.DATA_FORMAT).parse(reservation.getToDate());
-          Date selectedDate = reservationCheckerData.getSelectedDate();
+          LocalDate fromDate = LocalDate.parse(reservation.getFromDate(), RESERVATION_DATE_FORMATTER);
+          LocalDate toDate = LocalDate.parse(reservation.getToDate(), RESERVATION_DATE_FORMATTER);
+          LocalDate selectedDate = reservationCheckerData.getSelectedDate();
 
-          if (selectedDate.after(fromDate) && selectedDate.before(toDate)) {
+          if (selectedDate.isAfter(fromDate) && selectedDate.isBefore(toDate)) {
             isAvailible = false;
             break;
           }
-        } catch (ParseException ex) {
-          ex.printStackTrace();
+        } catch (RuntimeException ex) {
+          logger.warning("Unable to parse reservation date: " + ex.getMessage());
         }
       }
 
@@ -100,43 +106,32 @@ public class AvailabilityCheckerServlet extends HttpServlet {
   }
 
   protected int exportRevervations(String selectedDateStr) {
-    File fileToZip = IOUtils.getFileFromRelativePath("reservations.json");
-    String userDirectory = System.getProperty("user.home");
-    String zipPath = userDirectory + "/reservations.zip";
-
-    FileOutputStream fos;
     try {
-      fos = new FileOutputStream(zipPath);
-      ZipOutputStream zipOut = new ZipOutputStream(fos);
+      byte[] reservationContent = IOUtils.getBytesFromStorage(RESERVATIONS_BLOB);
+      byte[] zipContent;
 
-      FileInputStream fis = new FileInputStream(fileToZip);
-      ZipEntry zipEntry = new ZipEntry(fileToZip.getName());
-      zipOut.putNextEntry(zipEntry);
-
-      byte[] bytes = new byte[1024];
-      int length;
-      while ((length = fis.read(bytes)) >= 0) {
-        zipOut.write(bytes, 0, length);
+      try (ByteArrayOutputStream zipBuffer = new ByteArrayOutputStream();
+          ZipOutputStream zipOut = new ZipOutputStream(zipBuffer)) {
+        ZipEntry zipEntry = new ZipEntry(RESERVATIONS_BLOB);
+        zipOut.putNextEntry(zipEntry);
+        zipOut.write(reservationContent);
+        zipOut.closeEntry();
+        zipOut.finish();
+        zipContent = zipBuffer.toByteArray();
       }
-      fis.close();
 
-      zipOut.close();
-      fos.close();
-
-      // verify zip
-      ZipValidator zipValidator = new ZipValidator(new File(zipPath));
+      ZipValidator zipValidator = new ZipValidator(zipContent);
       if (zipValidator.isValid()) {
+        IOUtils.writeBytesToStorage(RESERVATIONS_EXPORT_BLOB, zipContent, "application/zip");
+        AzureServiceBusScheduler.scheduleIfConfigured(
+            "{\"operation\":\"reservation-export\",\"blob\":\"" + RESERVATIONS_EXPORT_BLOB + "\"}",
+            OffsetDateTime.now(ZoneOffset.UTC));
         return 0;
       }
-    } catch (FileNotFoundException e) {
-      // TODO Auto-generated catch block
-      e.printStackTrace();
     } catch (IOException e) {
-      // TODO Auto-generated catch block
-      e.printStackTrace();
+      logger.warning("Unable to export reservations to Azure Blob Storage: " + e.getMessage());
     } catch (Throwable e) {
-      // TODO Auto-generated catch block
-      e.printStackTrace();
+      logger.warning("Unexpected error while exporting reservations: " + e.getMessage());
     }
     return -1;
   }

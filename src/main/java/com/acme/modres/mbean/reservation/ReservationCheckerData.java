@@ -1,14 +1,17 @@
 package com.acme.modres.mbean.reservation;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 
 import com.acme.modres.Constants;
+import com.acme.modres.cloud.AzureServiceBusScheduler;
 
 public class ReservationCheckerData {
+  private static final DateTimeFormatter RESERVATION_DATE_FORMATTER = DateTimeFormatter.ofPattern(Constants.DATA_FORMAT);
+
   private ReservationList reservations;
-  private Date selectedDate;
-  private boolean available; // changed from Boolean to boolean
+  private LocalDate selectedDate;
+  private boolean available;
 
   public ReservationCheckerData(ReservationList reservations) {
     this.reservations = reservations;
@@ -19,13 +22,16 @@ public class ReservationCheckerData {
     return reservations;
   }
 
-  public Date getSelectedDate() {
+  public LocalDate getSelectedDate() {
     return selectedDate;
   }
 
   public boolean setSelectedDate(String dateStr) {
     try {
-      selectedDate = new SimpleDateFormat(Constants.DATA_FORMAT).parse(dateStr);
+      selectedDate = LocalDate.parse(dateStr, RESERVATION_DATE_FORMATTER);
+      AzureServiceBusScheduler.scheduleIfConfigured(
+          "{\"operation\":\"reservation-date-selected\",\"date\":\"" + dateStr + "\"}",
+          selectedDate.atStartOfDay().atOffset(java.time.ZoneOffset.UTC));
     } catch (Exception e) {
       return false;
     }
@@ -36,7 +42,7 @@ public class ReservationCheckerData {
     return available;
   }
 
-  public void setAvailablility(boolean available) { // fix parameter type
+  public void setAvailablility(boolean available) {
     this.available = available;
   }
 }

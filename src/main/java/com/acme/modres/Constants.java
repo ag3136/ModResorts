@@ -19,7 +19,7 @@ public class Constants {
   public final static String SAN_FRANCESCO_WEATHER_FILE = "sanfran.json";
 
   // constants used to construct Weather Underground API
-  public final static String WUNDERGROUND_API_PREFIX = "http://api.wunderground.com/api/";
+  public final static String WUNDERGROUND_API_PREFIX = "https://api.wunderground.com/api/";
   public final static String WUNDERGROUND_API_PART = "/forecast/geolookup/conditions/q/";
 
   public final static String DATA_FORMAT = "MM/dd/yyyy";
